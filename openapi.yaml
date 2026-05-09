@@ -52,6 +52,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+    post:
+      summary: Create a new product
+      description: Creates a new product with stock information
+      operationId: createProduct
+      tags:
+        - Products
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+            example:
+              title: "New Product"
+              description: "Product description"
+              price: 99
+              count: 10
+      responses:
+        '201':
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: "7567ec4b-b10c-48c5-9345-fc73c48a80aa"
+                title: "New Product"
+                description: "Product description"
+                price: 99
+                count: 10
+        '400':
+          description: Bad request - Invalid product data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                error: "Invalid product data"
+                details:
+                  - "title is required"
+                  - "price must be a non-negative number"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /products/{productId}:
     get:
       summary: Get product by ID
@@ -81,6 +129,107 @@ paths:
                 description: "Short Product Description1"
                 price: 24
                 count: 1
+        '400':
+          description: Bad request - Product ID is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Product ID is required"
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Product not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Update a product
+      description: Updates an existing product with new information
+      operationId: updateProduct
+      tags:
+        - Products
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          description: The unique identifier of the product
+          schema:
+            type: string
+            format: uuid
+          example: "7567ec4b-b10c-48c5-9345-fc73c48a80aa"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+            example:
+              price: 99
+              count: 15
+      responses:
+        '200':
+          description: Product updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: "7567ec4b-b10c-48c5-9345-fc73c48a80aa"
+                title: "ProductOne"
+                description: "Short Product Description1"
+                price: 99
+                count: 15
+        '400':
+          description: Bad request - Invalid update data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                error: "Invalid update data"
+                details:
+                  - "price must be a non-negative number"
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Product not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a product
+      description: Deletes a product from the system
+      operationId: deleteProduct
+      tags:
+        - Products
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          description: The unique identifier of the product
+          schema:
+            type: string
+            format: uuid
+          example: "7567ec4b-b10c-48c5-9345-fc73c48a80aa"
+      responses:
+        '204':
+          description: Product deleted successfully
         '400':
           description: Bad request - Product ID is required
           content:
@@ -140,6 +289,56 @@ components:
           minimum: 0
           example: 1
 
+    CreateProductRequest:
+      type: object
+      required:
+        - title
+        - price
+        - count
+      properties:
+        title:
+          type: string
+          description: Product title
+          example: "New Product"
+        description:
+          type: string
+          description: Product description
+          example: "Product description"
+        price:
+          type: number
+          format: double
+          description: Product price in USD
+          minimum: 0
+          example: 99
+        count:
+          type: integer
+          description: Number of items in stock
+          minimum: 0
+          example: 10
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Product title
+          example: "Updated Title"
+        description:
+          type: string
+          description: Product description
+          example: "Updated description"
+        price:
+          type: number
+          format: double
+          description: Product price in USD
+          minimum: 0
+          example: 99
+        count:
+          type: integer
+          description: Number of items in stock
+          minimum: 0
+          example: 15
+
     Error:
       type: object
       required:
@@ -149,6 +348,25 @@ components:
           type: string
           description: Error message
           example: "Product not found"
+
+    ValidationError:
+      type: object
+      required:
+        - error
+        - details
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Invalid product data"
+        details:
+          type: array
+          items:
+            type: string
+          description: List of validation errors
+          example:
+            - "title is required"
+            - "price must be a non-negative number"
 
 tags:
   - name: Products
