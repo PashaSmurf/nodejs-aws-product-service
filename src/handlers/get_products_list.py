@@ -6,13 +6,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.products import PRODUCTS
+from utils.db import get_all_products
 
 
 def lambda_handler(event, context):
     """
-    Get list of all products.
-    
+    Get list of all products from DynamoDB.
+
     Args:
         event: Lambda event
         context: Lambda context
@@ -20,8 +20,11 @@ def lambda_handler(event, context):
     Returns:
         API Gateway response with product list
     """
+    print(f"Received request: {json.dumps(event)}")
+
     try:
-        products = [product.to_dict() for product in PRODUCTS]
+        products = get_all_products()
+        print(f"Retrieved {len(products)} products")
 
         return {
             "statusCode": 200,
