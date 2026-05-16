@@ -1,47 +1,78 @@
-# AWS Product Service
+# AWS Product & Import Services
 
-This is the backend product service for the AWS Shop application. It's built with Python Lambda functions, AWS DynamoDB,
-AWS API Gateway, and AWS CDK for infrastructure-as-code deployment.
+A microservices backend for the AWS Shop application consisting of two independent services:
+- **Product Service**: CRUD operations on products with DynamoDB
+- **Import Service**: CSV file import with S3 integration and automated parsing
 
 ## Project Structure
 
 ```
 nodejs-aws-product-service/
-├── src/
-│   ├── handlers/
-│   │   ├── get_products_list.py      # Lambda handler for GET /products
-│   │   ├── get_products_by_id.py     # Lambda handler for GET /products/{productId}
-│   │   └── create_product.py         # Lambda handler for POST /products
-│   ├── utils/
-│   │   └── db.py                     # DynamoDB operations
-│   ├── data/
-│   │   └── products.py               # Mock product data (legacy)
-│   └── models/
-│       └── product.py                # Product model/schema
-├── cdk/
-│   ├── product_stack.ts              # CDK Stack definition (TypeScript)
-│   └── app.ts                        # CDK App entry point
-├── scripts/
-│   └── seed_db.py                    # Database seeding script
-├── tests/
-│   ├── test_get_products_list.py
-│   └── test_get_products_by_id.py
-├── requirements.txt                  # Python dependencies (includes boto3)
-├── DEPLOYMENT.md                     # Detailed deployment guide
-├── .gitignore
-└── README.md
+│
+├── product-service/                  # Product management microservice
+│   ├── cdk/
+│   │   ├── app.ts                    # CDK App entry point
+│   │   └── product_stack.ts          # CDK Stack definition
+│   ├── src/
+│   │   ├── handlers/                 # Lambda handlers
+│   │   │   ├── get_products_list.py
+│   │   │   ├── get_products_by_id.py
+│   │   │   ├── create_product.py
+│   │   │   ├── update_product.py
+│   │   │   └── delete_product.py
+│   │   ├── data/
+│   │   ├── models/
+│   │   └── utils/
+│   ├── tests/
+│   ├── scripts/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── cdk.json
+│   ├── pytest.ini
+│   ├── requirements.txt
+│   └── openapi.yaml
+│
+├── import-service/                   # File import microservice
+│   ├── cdk/
+│   │   ├── app.ts                    # CDK App entry point
+│   │   └── import_stack.ts           # CDK Stack definition
+│   ├── src/
+│   │   ├── handlers/
+│   │   │   ├── import_products_file.py  # Get signed URL for upload
+│   │   │   └── import_file_parser.py    # Parse CSV from S3
+│   │   ├── models/
+│   │   └── utils/
+│   ├── tests/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── cdk.json
+│   ├── pytest.ini
+│   └── requirements.txt
+│
+├── openapi.yaml                      # Shared API documentation
+├── README.md
+└── .gitignore
 ```
 
-## Key Features (Task 4)
+## Key Features
 
-DynamoDB Integration: Products and Stocks tables with proper schema
-Five Lambda Functions: GET /products, GET /products/{id}, POST /products, PUT /products/{id}, DELETE /products/{id}
-Error Handling: 400 for validation, 404 for not found, 500 for server errors
-Comprehensive Logging: All requests logged with arguments
-Data Seeding: Automated script to populate test data
-CORS Enabled: All endpoints support cross-origin requests
-Validation: Product creation/update validates required fields and types
-Comprehensive Tests: 43 unit tests covering all CRUD operations
+### Product Service (Task 4)
+- **DynamoDB Integration**: Products and Stocks tables with proper schema
+- **CRUD Operations**: GET /products, GET /products/{id}, POST /products, PUT /products/{id}, DELETE /products/{id}
+- **Error Handling**: Proper HTTP status codes (400, 404, 500)
+- **Comprehensive Logging**: All requests logged with arguments
+- **Data Seeding**: Automated script to populate test data
+- **CORS Enabled**: All endpoints support cross-origin requests
+- **Validation**: Product creation/update validates required fields and types
+- **Comprehensive Tests**: 43+ unit tests covering all CRUD operations
+
+### Import Service (Task 5)
+- **S3 Integration**: Secure file upload with signed URLs
+- **CSV Parsing**: Automated parsing of uploaded CSV files
+- **Event-Driven**: Triggered by S3 ObjectCreated events
+- **File Organization**: Automatic movement from 'uploaded' to 'parsed' folders
+- **Logging**: All records logged to CloudWatch
+- **Security**: IAM policies restrict access to specific S3 locations
 
 ## Prerequisites
 
@@ -49,13 +80,16 @@ Comprehensive Tests: 43 unit tests covering all CRUD operations
 - AWS CDK v2
 - AWS CLI with configured credentials
 - Node.js 16+ (for AWS CDK)
-- boto3 library (for DynamoDB operations)
+- boto3 library (for AWS services)
 
 ## Quick Start
+
+### Product Service
 
 1. **Install dependencies:**
 
 ```bash
+cd product-service
 npm install
 pip install -r requirements.txt
 ```
@@ -72,11 +106,44 @@ npm run deploy
 python scripts/seed_db.py
 ```
 
-4. **Test endpoints** (see DEPLOYMENT.md for detailed examples)
+### Import Service
+
+1. **Install dependencies:**
+
+```bash
+cd import-service
+npm install
+pip install -r requirements.txt
+```
+
+2. **Deploy infrastructure:**
+
+```bash
+npm run deploy
+```
+
+3. **Create S3 bucket folders** (if not created automatically):
+   - The service will create an S3 bucket with `uploaded/` and `parsed/` prefixes for file organization
+
+### Running Tests
+
+**Product Service:**
+```bash
+cd product-service
+npm run test
+```
+
+**Import Service:**
+```bash
+cd import-service
+npm run test
+```
 
 ## Endpoints
 
-### GET /products
+### Product Service
+
+#### GET /products
 
 Returns list of all available products with stock counts.
 
@@ -95,7 +162,7 @@ Returns list of all available products with stock counts.
 ]
 ```
 
-### GET /products/{productId}
+#### GET /products/{productId}
 
 Returns a specific product by ID with stock count.
 
@@ -118,7 +185,7 @@ Returns a specific product by ID with stock count.
 }
 ```
 
-### POST /products
+#### POST /products
 
 Creates a new product with stock information.
 
@@ -155,29 +222,116 @@ Creates a new product with stock information.
 }
 ```
 
+### Import Service
+
+#### GET /import
+
+Generates a signed URL for uploading a CSV file to S3.
+
+**Query Parameters:**
+- `name` (required): The name of the CSV file to upload (e.g., `products.csv`)
+
+**Request:**
+```
+GET /import?name=products.csv
+```
+
+**Response (200):**
+Returns a clean signed URL as plain text that can be used to upload a file via PUT request.
+
+**Example usage:**
+```bash
+# Get signed URL
+SIGNED_URL=$(curl https://{import-service-endpoint}/import?name=products.csv)
+
+# Upload file using the signed URL
+curl -X PUT --data-binary @products.csv "$SIGNED_URL"
+```
+
+**Error (400):**
+```json
+{
+  "error": "File name parameter \"name\" is required"
+}
+```
+
+#### S3 Event - File Parser
+
+Automatically triggered when a file is uploaded to the `uploaded/` folder in S3.
+
+**Behavior:**
+1. Downloads the CSV file from S3
+2. Parses it using Python's csv module
+3. Logs each product record to CloudWatch
+4. Moves the file from `uploaded/` to `parsed/` folder
+
+**CSV Format Expected:**
+```csv
+id,title,description,price,count
+1,Product Name,Description,99.99,10
+```
+
+### Accessing Deployed Services
+
+After deployment, both services will output their API endpoints:
+
+```
+Product Service:
+  API Endpoint: https://{product-api-id}.execute-api.{region}.amazonaws.com/dev/
+  Products: https://{product-api-id}.execute-api.{region}.amazonaws.com/dev/products
+
+Import Service:
+  API Endpoint: https://{import-api-id}.execute-api.{region}.amazonaws.com/dev/
+  Import Endpoint: https://{import-api-id}.execute-api.{region}.amazonaws.com/dev/import?name={filename}
+  S3 Bucket: import-service-bucket-{account-suffix}
+```
+
 ## Testing
+
+### Product Service Tests
 
 Run unit tests:
 
 ```bash
+cd product-service
 npm run test
 ```
 
-All 43 tests pass covering:
+Covers:
 - GET /products and GET /products/{id} operations
 - POST /products creation with validation
 - PUT /products/{id} updates
 - DELETE /products/{id} removal
 - Error handling (400, 404, 500 responses)
+- 43+ test cases
 
-## Deployment Guide
+### Import Service Tests
 
-For detailed deployment instructions, database setup, and troubleshooting, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+Run unit tests:
+
+```bash
+cd import-service
+npm run test
+```
+
+Tests include (to be implemented):
+- Signed URL generation
+- CSV parsing logic
+- S3 event handling
+- File movement functionality
 
 ## Environment Variables
 
-Lambda functions use:
+### Product Service
 
+Lambda functions use:
 - `PRODUCTS_TABLE` - DynamoDB products table name
 - `STOCKS_TABLE` - DynamoDB stocks table name
 - `AWS_REGION` - AWS region (default: us-east-1)
+
+### Import Service
+
+Lambda functions use:
+- `IMPORT_BUCKET_NAME` - S3 bucket name for imports
+- `AWS_REGION` - AWS region (default: us-east-1)
+

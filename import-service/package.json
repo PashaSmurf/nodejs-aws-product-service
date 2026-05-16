@@ -1,7 +1,7 @@
 {
-  "name": "aws-product-service-cdk",
+  "name": "import-service",
   "version": "1.0.0",
-  "description": "CDK infrastructure for AWS Product Service",
+  "description": "Import Service with AWS CDK - handles S3 file imports",
   "main": "cdk/app.ts",
   "scripts": {
     "build": "tsc",
