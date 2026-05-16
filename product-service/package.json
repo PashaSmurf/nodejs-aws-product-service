@@ -1,0 +1,26 @@
+{
+  "name": "product-service",
+  "version": "1.0.0",
+  "description": "Product Service with AWS CDK",
+  "main": "cdk/app.ts",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk",
+    "cdk:synth": "cdk synth",
+    "cdk:diff": "cdk diff",
+    "deploy": "cdk deploy --require-approval never",
+    "destroy": "cdk destroy --force",
+    "seed": "python scripts/seed_db.py",
+    "test": "pytest tests/ -v"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.128.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^4.9.5",
+    "aws-cdk": "^2.128.0"
+  }
+}
+
