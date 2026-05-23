@@ -142,16 +142,15 @@ class TestImportFileParser:
         event = {'Records': []}
 
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 400
             body = json.loads(response['body'])
             assert 'No S3 records' in body['error']
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_valid_s3_event_not_object_created(self, mock_s3, mock_dynamodb):
+    def test_valid_s3_event_not_object_created(self, mock_s3, mock_sqs):
         """Test that non-ObjectCreated events are skipped"""
         from handlers.import_file_parser import lambda_handler
 
@@ -163,15 +162,15 @@ class TestImportFileParser:
         }
 
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             mock_s3.get_object.assert_not_called()
+            mock_sqs.send_message.assert_not_called()
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_file_not_in_uploaded_folder(self, mock_s3, mock_dynamodb):
+    def test_file_not_in_uploaded_folder(self, mock_s3, mock_sqs):
         """Test that files not in 'uploaded' folder are skipped"""
         from handlers.import_file_parser import lambda_handler
 
@@ -183,16 +182,16 @@ class TestImportFileParser:
         }
 
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             mock_s3.get_object.assert_not_called()
+            mock_sqs.send_message.assert_not_called()
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_parse_valid_csv(self, mock_s3, mock_dynamodb):
-        """Test parsing a valid CSV file"""
+    def test_parse_valid_csv(self, mock_s3, mock_sqs):
+        """Test parsing a valid CSV file and sending to SQS"""
         from handlers.import_file_parser import lambda_handler
 
         # Create mock CSV content
@@ -203,11 +202,6 @@ class TestImportFileParser:
         }
         mock_s3.get_object.return_value = mock_response
 
-        # Mock DynamoDB tables - use return_value instead of side_effect
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -216,17 +210,16 @@ class TestImportFileParser:
         }
 
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
 
-            # Verify Product.Table and Stocks.Table calls
-            assert mock_dynamodb.Table.call_count >= 2
+            # Verify SQS send_message was called for each record
+            assert mock_sqs.send_message.call_count == 2
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_parse_csv_with_bom(self, mock_s3, mock_dynamodb):
+    def test_parse_csv_with_bom(self, mock_s3, mock_sqs):
         """Test parsing CSV with UTF-8 BOM"""
         from handlers.import_file_parser import lambda_handler
 
@@ -238,11 +231,6 @@ class TestImportFileParser:
         }
         mock_s3.get_object.return_value = mock_response
 
-        # Mock DynamoDB tables
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table]
-
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -251,20 +239,20 @@ class TestImportFileParser:
         }
 
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
 
-            # Verify product was saved (BOM should be handled)
-            mock_products_table.put_item.assert_called_once()
-            call_args = mock_products_table.put_item.call_args[1]['Item']
-            assert call_args['title'] == 'Laptop'
+            # Verify product was sent to SQS (BOM should be handled)
+            mock_sqs.send_message.assert_called_once()
+            call_args = mock_sqs.send_message.call_args
+            message_body = json.loads(call_args[1]['MessageBody'])
+            assert message_body['title'] == 'Laptop'
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_skip_record_with_empty_title(self, mock_s3, mock_dynamodb):
-        """Test that records with empty title are skipped"""
+    def test_skip_record_with_empty_title(self, mock_s3, mock_sqs):
+        """Test that records with empty title are still sent to SQS (validation in catalogBatchProcess)"""
         from handlers.import_file_parser import lambda_handler
         
         csv_content = "id,title,description,price,count\n1,,A laptop,999.99,5\n2,Mouse,A mouse,29.99,10"
@@ -274,11 +262,6 @@ class TestImportFileParser:
         }
         mock_s3.get_object.return_value = mock_response
         
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        # Provide extra mocks for both iterations
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-        
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -287,31 +270,26 @@ class TestImportFileParser:
         }
         
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             
-            # Only 1 product should be saved (the 2nd one - mouse)
-            assert mock_dynamodb.Table.call_count >= 2
+            # SQS records are sent regardless of validation (validation happens in catalogBatchProcess)
+            assert mock_sqs.send_message.call_count == 2
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_invalid_price_defaults_to_zero(self, mock_s3, mock_dynamodb):
-        """Test that invalid price values are handled gracefully"""
+    def test_invalid_price_defaults_to_zero(self, mock_s3, mock_sqs):
+        """Test that invalid price values are converted to 0"""
         from handlers.import_file_parser import lambda_handler
         
-        csv_content = "id,title,description,price,count\n1,Laptop,A laptop,999.99,5"
-        
+        csv_content = "id,title,description,price,count\n1,Laptop,A laptop,invalid,5"
+
         mock_response = {
             'Body': MagicMock(read=lambda: csv_content.encode('utf-8'))
         }
         mock_s3.get_object.return_value = mock_response
         
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-        
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -320,31 +298,29 @@ class TestImportFileParser:
         }
         
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             
-            # Verify at least one product was attempted to be saved
-            assert mock_dynamodb.Table.call_count >= 2
+            # Verify message was sent with price=0
+            mock_sqs.send_message.assert_called_once()
+            call_args = mock_sqs.send_message.call_args
+            message_body = json.loads(call_args[1]['MessageBody'])
+            assert message_body['price'] == 0.0
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_invalid_count_defaults_to_zero(self, mock_s3, mock_dynamodb):
-        """Test that invalid count values are handled gracefully"""
+    def test_invalid_count_defaults_to_zero(self, mock_s3, mock_sqs):
+        """Test that invalid count values are converted to 0"""
         from handlers.import_file_parser import lambda_handler
         
-        csv_content = "id,title,description,price,count\n1,Laptop,A laptop,999.99,10"
-        
+        csv_content = "id,title,description,price,count\n1,Laptop,A laptop,999.99,invalid"
+
         mock_response = {
             'Body': MagicMock(read=lambda: csv_content.encode('utf-8'))
         }
         mock_s3.get_object.return_value = mock_response
         
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-        
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -353,17 +329,19 @@ class TestImportFileParser:
         }
         
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             
-            # Verify at least one product was attempted to be saved
-            assert mock_dynamodb.Table.call_count >= 2
+            # Verify message was sent with count=0
+            mock_sqs.send_message.assert_called_once()
+            call_args = mock_sqs.send_message.call_args
+            message_body = json.loads(call_args[1]['MessageBody'])
+            assert message_body['count'] == 0
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_move_file_to_parsed_folder(self, mock_s3, mock_dynamodb):
+    def test_move_file_to_parsed_folder(self, mock_s3, mock_sqs):
         """Test that file is moved from uploaded to parsed folder"""
         from handlers.import_file_parser import lambda_handler
         
@@ -374,10 +352,6 @@ class TestImportFileParser:
         }
         mock_s3.get_object.return_value = mock_response
         
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-        
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -386,8 +360,7 @@ class TestImportFileParser:
         }
         
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             
@@ -401,9 +374,9 @@ class TestImportFileParser:
             delete_call = mock_s3.delete_object.call_args
             assert 'uploaded/products.csv' in delete_call[1]['Key']
 
-    @patch('handlers.import_file_parser.dynamodb')
+    @patch('handlers.import_file_parser.sqs_client')
     @patch('handlers.import_file_parser.s3_client')
-    def test_auto_generate_id_if_missing(self, mock_s3, mock_dynamodb):
+    def test_auto_generate_id_if_missing(self, mock_s3, mock_sqs):
         """Test that product ID is auto-generated if missing"""
         from handlers.import_file_parser import lambda_handler
         import uuid
@@ -415,10 +388,6 @@ class TestImportFileParser:
         }
         mock_s3.get_object.return_value = mock_response
         
-        mock_products_table = MagicMock()
-        mock_stocks_table = MagicMock()
-        mock_dynamodb.Table.side_effect = [mock_products_table, mock_stocks_table, mock_products_table, mock_stocks_table]
-        
         event = {
             'Records': [{
                 'eventName': 'ObjectCreated:Put',
@@ -427,13 +396,15 @@ class TestImportFileParser:
         }
         
         with patch.dict(os.environ, {'IMPORT_BUCKET_NAME': 'test-bucket',
-                                      'PRODUCTS_TABLE': 'products',
-                                      'STOCKS_TABLE': 'stocks'}):
+                                      'CATALOG_ITEMS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123/catalogItemsQueue'}):
             response = lambda_handler(event, None)
             assert response['statusCode'] == 200
             
-            # Verify products table was called (meaning a product was saved)
-            assert mock_dynamodb.Table.call_count >= 2
+            # Verify message was sent with auto-generated ID
+            mock_sqs.send_message.assert_called_once()
+            call_args = mock_sqs.send_message.call_args
+            message_body = json.loads(call_args[1]['MessageBody'])
+            assert message_body['id']  # Should have some ID
 
 
 if __name__ == '__main__':

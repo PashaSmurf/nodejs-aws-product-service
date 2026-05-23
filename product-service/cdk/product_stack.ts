@@ -2,6 +2,10 @@ import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as sns_subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as lambda_event_sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -25,6 +29,26 @@ export class ProductServiceStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    // Create SQS Queue for catalog batch processing
+    const catalogItemsQueue = new sqs.Queue(this, 'CatalogItemsQueue', {
+      queueName: 'catalogItemsQueue',
+      visibilityTimeout: cdk.Duration.seconds(300),
+      retentionPeriod: cdk.Duration.days(1),
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Create SNS Topic for product creation notifications
+    const createProductTopic = new sns.Topic(this, 'CreateProductTopic', {
+      topicName: 'createProductTopic',
+      displayName: 'Create Product Notifications',
+    });
+
+    // Add email subscription to SNS topic (requires manual confirmation)
+    const emailAddress = process.env.NOTIFICATION_EMAIL || 'pavelljahovskij97@gmail.com';
+    createProductTopic.addSubscription(
+      new sns_subscriptions.EmailSubscription(emailAddress)
+    );
 
     // Create API Gateway REST API
     const api = new apigateway.RestApi(this, 'ProductServiceApi', {
@@ -131,6 +155,27 @@ export class ProductServiceStack extends cdk.Stack {
       }
     );
 
+    // Lambda function for SQS event - Catalog Batch Process
+    const catalogBatchProcessFunction = new lambda.Function(
+      this,
+      'CatalogBatchProcessFunction',
+      {
+        runtime: lambda.Runtime.PYTHON_3_11,
+        code: lambda.Code.fromAsset(path.join(__dirname, '../src'), {
+          exclude: ['*.pyc', '__pycache__', '*.egg-info', '.pytest_cache'],
+        }),
+        handler: 'handlers.catalog_batch_process.lambda_handler',
+        description: 'Process batch of catalog items from SQS and create products',
+        environment: {
+          PRODUCTS_TABLE: productsTable.tableName,
+          STOCKS_TABLE: stocksTable.tableName,
+          SNS_TOPIC_ARN: createProductTopic.topicArn,
+        },
+        timeout: cdk.Duration.seconds(60),
+        memorySize: 512,
+      }
+    );
+
     // Grant read/write permissions to Lambda functions
     productsTable.grantReadWriteData(getProductsListFunction);
     productsTable.grantReadWriteData(getProductsByIdFunction);
@@ -143,6 +188,19 @@ export class ProductServiceStack extends cdk.Stack {
     stocksTable.grantReadWriteData(createProductFunction);
     stocksTable.grantReadWriteData(updateProductFunction);
     stocksTable.grantReadWriteData(deleteProductFunction);
+
+    // Grant permissions to catalogBatchProcessFunction
+    productsTable.grantReadWriteData(catalogBatchProcessFunction);
+    stocksTable.grantReadWriteData(catalogBatchProcessFunction);
+    catalogItemsQueue.grantConsumeMessages(catalogBatchProcessFunction);
+    createProductTopic.grantPublish(catalogBatchProcessFunction);
+
+    // Configure SQS to trigger Lambda with batch size 5
+    catalogBatchProcessFunction.addEventSource(
+      new lambda_event_sources.SqsEventSource(catalogItemsQueue, {
+        batchSize: 5,
+      })
+    );
 
       // Create /products resource and GET/POST methods
     const productsResource = api.root.addResource('products');
@@ -187,6 +245,18 @@ export class ProductServiceStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DeleteProductEndpoint', {
       value: `${api.url}products/{productId}`,
       description: 'Delete Product Endpoint',
+    });
+
+    new cdk.CfnOutput(this, 'CatalogItemsQueueUrl', {
+      value: catalogItemsQueue.queueUrl,
+      description: 'SQS Queue URL for catalog items',
+      exportName: 'CatalogItemsQueueUrl',
+    });
+
+    new cdk.CfnOutput(this, 'CreateProductTopicArn', {
+      value: createProductTopic.topicArn,
+      description: 'SNS Topic ARN for product creation notifications',
+      exportName: 'CreateProductTopicArn',
     });
   }
 }

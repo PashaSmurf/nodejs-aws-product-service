@@ -5,22 +5,17 @@ import csv
 import uuid
 import os
 from io import StringIO
-from decimal import Decimal
 
 s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
+sqs_client = boto3.client('sqs')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-# Get DynamoDB table name from environment
-PRODUCTS_TABLE_NAME = os.environ.get('PRODUCTS_TABLE', 'products')
-STOCKS_TABLE_NAME = os.environ.get('STOCKS_TABLE', 'stocks')
 
 
 def lambda_handler(event, context):
     """
     Lambda handler triggered by S3 ObjectCreated event
-    Parses CSV file from S3 'uploaded' folder and logs each record
+    Parses CSV file from S3 'uploaded' folder and sends each record to SQS
 
     Event:
         S3 event with bucket and key information
@@ -28,8 +23,8 @@ def lambda_handler(event, context):
     Behavior:
         1. Downloads the CSV file from S3
         2. Parses it using csv module
-        3. Logs each record to CloudWatch
-        4. (Optional) Moves file from 'uploaded' to 'parsed' folder
+        3. Sends each record to SQS queue
+        4. Moves file from 'uploaded' to 'parsed' folder
     """
     try:
         logger.info(f"Event: {json.dumps(event)}")
@@ -75,24 +70,20 @@ def lambda_handler(event, context):
                     logger.info(f"CSV fieldnames: {fieldnames}")
 
                     record_count = 0
-                    skipped_count = 0
-                    saved_count = 0
+                    sent_count = 0
 
                     for row in csv_reader:
                         record_count += 1
-                        logger.info(f"Product record {record_count}: {json.dumps(row)}")
 
-                        # Save product to DynamoDB
+                        # Send record to SQS
                         try:
-                            if save_product_to_dynamodb(row):
-                                saved_count += 1
-                            else:
-                                skipped_count += 1
-                        except Exception as save_error:
-                            logger.error(f"Error saving product record {record_count}: {str(save_error)}", exc_info=True)
+                            if send_record_to_sqs(row):
+                                sent_count += 1
+                        except Exception as sqs_error:
+                            logger.error(f"Error sending record {record_count} to SQS: {str(sqs_error)}", exc_info=True)
                             # Continue processing other records even if one fails
 
-                    logger.info(f"Successfully processed {record_count} records from {object_key}. Saved: {saved_count}, Skipped: {skipped_count}")
+                    logger.info(f"Successfully processed {record_count} records from {object_key}. Sent to SQS: {sent_count}")
 
                     # Optional: Move file from 'uploaded' to 'parsed' folder
                     try:
@@ -123,88 +114,63 @@ def lambda_handler(event, context):
         }
 
 
-def save_product_to_dynamodb(product_row):
+def send_record_to_sqs(product_row):
     """
-    Save a product record from CSV to DynamoDB
+    Send a product record from CSV to SQS queue
 
     Args:
         product_row: Dictionary with keys: id, title, description, price, count
 
     Returns:
-        True if product was saved, False if skipped
+        True if record was sent, False otherwise
     """
     try:
-        # Generate ID if not provided
-        product_id = product_row.get('id')
-        if product_id is None:
-            product_id = ''
-        product_id = str(product_id).strip()
+        # Get SQS queue URL from environment
+        queue_url = os.environ.get('CATALOG_ITEMS_QUEUE_URL')
+        if not queue_url:
+            logger.error("CATALOG_ITEMS_QUEUE_URL not set")
+            raise ValueError("CATALOG_ITEMS_QUEUE_URL environment variable not set")
+
+        # Prepare product data
+        product_id = product_row.get('id', '').strip()
         if not product_id:
             product_id = str(uuid.uuid4())
-            logger.info(f"Generated new product ID: {product_id}")
 
-        products_table = dynamodb.Table(PRODUCTS_TABLE_NAME)
-        stocks_table = dynamodb.Table(STOCKS_TABLE_NAME)
-
-        # Extract and validate data
-        title = product_row.get('title')
-        if title is None:
-            title = ''
-        title = str(title).strip()
-
-        if not title:
-            logger.warning(f"Skipping record with missing/empty title. Row: {product_row}")
-            return False
-
-        description = product_row.get('description')
-        if description is None:
-            description = ''
-        description = str(description).strip()
+        title = product_row.get('title', '').strip()
+        description = product_row.get('description', '').strip()
 
         try:
-            price_val = product_row.get('price', 0)
-            if price_val is None:
-                price_val = 0
-            price = Decimal(str(price_val))
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Invalid price for product {title}: {product_row.get('price')}. Setting to 0. Error: {str(e)}")
-            price = Decimal(0)
+            price = float(product_row.get('price', 0))
+        except (ValueError, TypeError):
+            price = 0.0
 
         try:
-            count_val = product_row.get('count', 0)
-            if count_val is None:
-                count_val = 0
-            count = int(count_val)
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Invalid count for product {title}: {product_row.get('count')}. Setting to 0. Error: {str(e)}")
+            count = int(product_row.get('count', 0))
+        except (ValueError, TypeError):
             count = 0
 
-        logger.info(f"Saving product: id={product_id}, title={title}, price={price}, count={count}")
+        # Build message for SQS
+        message_body = {
+            'id': product_id,
+            'title': title,
+            'description': description,
+            'price': price,
+            'count': count,
+        }
 
-        # Save to products table
-        products_table.put_item(
-            Item={
-                'id': product_id,
-                'title': title,
-                'description': description,
-                'price': price,
-            }
+        logger.info(f"Sending record to SQS: {json.dumps(message_body)}")
+
+        # Send to SQS
+        sqs_client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=json.dumps(message_body)
         )
-        logger.info(f"✓ Saved product to DynamoDB: {product_id} - {title}")
 
-        # Save stock count to stocks table
-        stocks_table.put_item(
-            Item={
-                'product_id': product_id,
-                'count': count,
-            }
-        )
-        logger.info(f"✓ Saved stock for product {product_id}: count={count}")
-
+        logger.info(f"✓ Record sent to SQS: {product_id} - {title}")
         return True
 
     except Exception as e:
-        logger.error(f"Error saving product to DynamoDB: {str(e)}", exc_info=True)
+        logger.error(f"Error sending record to SQS: {str(e)}", exc_info=True)
         raise
 
 

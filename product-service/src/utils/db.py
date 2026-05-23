@@ -68,12 +68,18 @@ def get_product_by_id(product_id: str) -> Optional[Dict[str, Any]]:
 def create_product(product_id: str, title: str, description: str, price: float, count: int) -> Dict[str, Any]:
     """Create a new product with stock in DynamoDB"""
     try:
+        # Convert price to Decimal for DynamoDB
+        if isinstance(price, Decimal):
+            price_decimal = price
+        else:
+            price_decimal = Decimal(str(price))
+
         # Create product
         products_table.put_item(Item={
             'id': product_id,
             'title': title,
             'description': description,
-            'price': price,
+            'price': price_decimal,
         })
 
         # Create stock
@@ -86,7 +92,7 @@ def create_product(product_id: str, title: str, description: str, price: float, 
             'id': product_id,
             'title': title,
             'description': description,
-            'price': float(price),
+            'price': float(price_decimal),
             'count': int(count),
         }
         return decimal_to_int(result)
