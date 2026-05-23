@@ -5,6 +5,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3_notifications from 'aws-cdk-lib/aws-s3-notifications';
 import * as lambda_event_sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -87,11 +88,10 @@ export class ImportServiceStack extends cdk.Stack {
           exclude: ['*.pyc', '__pycache__', '*.egg-info', '.pytest_cache'],
         }),
         handler: 'handlers.import_file_parser.lambda_handler',
-        description: 'Parse CSV file from S3 and log records',
+        description: 'Parse CSV file from S3 and send records to SQS',
         environment: {
           IMPORT_BUCKET_NAME: bucket.bucketName,
-          PRODUCTS_TABLE: 'products',
-          STOCKS_TABLE: 'stocks',
+          CATALOG_ITEMS_QUEUE_URL: cdk.Fn.importValue('CatalogItemsQueueUrl'),
         },
         timeout: cdk.Duration.seconds(60),
         memorySize: 512,
@@ -115,18 +115,14 @@ export class ImportServiceStack extends cdk.Stack {
       sourceArn: bucket.bucketArn,
     });
 
-    // Grant DynamoDB permissions to importFileParserFunction
+    // Grant SQS permissions to importFileParserFunction
     importFileParserFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: [
-          'dynamodb:PutItem',
-          'dynamodb:UpdateItem',
-          'dynamodb:GetItem',
-          'dynamodb:Query',
+          'sqs:SendMessage',
         ],
         resources: [
-          `arn:aws:dynamodb:${this.region}:${this.account}:table/products`,
-          `arn:aws:dynamodb:${this.region}:${this.account}:table/stocks`,
+          `arn:aws:sqs:${this.region}:${this.account}:catalogItemsQueue`,
         ],
       })
     );
