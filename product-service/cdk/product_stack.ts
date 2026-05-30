@@ -9,10 +9,14 @@ import * as lambda_event_sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
+export interface ProductServiceStackProps extends cdk.StackProps {
+  authorizerFunctionArn?: string;
+}
+
 export class ProductServiceStack extends cdk.Stack {
   public readonly apiEndpoint: string;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: ProductServiceStackProps) {
     super(scope, id, props);
 
     // Create DynamoDB Tables
@@ -202,16 +206,74 @@ export class ProductServiceStack extends cdk.Stack {
       })
     );
 
+    // Create Token Authorizer if authorizerFunctionArn is provided
+    let methodOptions: apigateway.MethodOptions = {
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+          },
+        },
+        {
+          statusCode: '400',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+          },
+        },
+        {
+          statusCode: '401',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+          },
+        },
+        {
+          statusCode: '403',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+          },
+        },
+        {
+          statusCode: '500',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+          },
+        },
+      ],
+    };
+
+    if (props?.authorizerFunctionArn) {
+      const authorizerFunction = lambda.Function.fromFunctionArn(this, 'BasicAuthorizerFunction', props.authorizerFunctionArn);
+      const authorizer = new apigateway.TokenAuthorizer(this, 'BasicTokenAuthorizer', {
+        handler: authorizerFunction,
+        identitySource: 'method.request.header.Authorization',
+        resultsCacheTtl: cdk.Duration.minutes(0),
+      });
+
+      methodOptions = {
+        ...methodOptions,
+        authorizer: authorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
+      };
+    }
+
       // Create /products resource and GET/POST methods
     const productsResource = api.root.addResource('products');
-    productsResource.addMethod('GET', new apigateway.LambdaIntegration(getProductsListFunction));
-    productsResource.addMethod('POST', new apigateway.LambdaIntegration(createProductFunction));
+    productsResource.addMethod('GET', new apigateway.LambdaIntegration(getProductsListFunction), methodOptions);
+    productsResource.addMethod('POST', new apigateway.LambdaIntegration(createProductFunction), methodOptions);
 
     // Create /products/{productId} resource and GET/PUT/DELETE methods
     const productIdResource = productsResource.addResource('{productId}');
-    productIdResource.addMethod('GET', new apigateway.LambdaIntegration(getProductsByIdFunction));
-    productIdResource.addMethod('PUT', new apigateway.LambdaIntegration(updateProductFunction));
-    productIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(deleteProductFunction));
+    productIdResource.addMethod('GET', new apigateway.LambdaIntegration(getProductsByIdFunction), methodOptions);
+    productIdResource.addMethod('PUT', new apigateway.LambdaIntegration(updateProductFunction), methodOptions);
+    productIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(deleteProductFunction), methodOptions);
 
     // Stack outputs
     this.apiEndpoint = api.url;

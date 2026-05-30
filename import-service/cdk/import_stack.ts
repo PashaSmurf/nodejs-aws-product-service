@@ -2,18 +2,20 @@ import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as s3_notifications from 'aws-cdk-lib/aws-s3-notifications';
 import * as lambda_event_sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import * as path from 'path';
+
+export interface ImportServiceStackProps extends cdk.StackProps {
+  authorizerFunctionArn?: string;
+}
 
 export class ImportServiceStack extends cdk.Stack {
   public readonly apiEndpoint: string;
   public readonly bucket: s3.IBucket;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: ImportServiceStackProps) {
     super(scope, id, props);
 
     // Create S3 bucket for imports
@@ -37,12 +39,7 @@ export class ImportServiceStack extends cdk.Stack {
 
     this.bucket = bucket;
 
-    // Create 'uploaded' and 'parsed' folders by creating empty objects
-    const uploadedFolderKey = 'uploaded/.keep';
-    const parsedFolderKey = 'parsed/.keep';
-
-    // Note: Folders don't actually exist in S3, they're just prefix conventions
-    // But we can log that they will be used
+    // Configure S3 for file organization with 'uploaded' and 'parsed' prefixes
     cdk.Tags.of(this).add('BucketStructure', 'uploaded/ and parsed/ folders');
 
     // Create API Gateway REST API
@@ -59,6 +56,17 @@ export class ImportServiceStack extends cdk.Stack {
         allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key'],
       },
     });
+
+    // Create Lambda Authorizer from centralized authorization service if ARN provided
+    let tokenAuthorizer: apigateway.TokenAuthorizer | undefined;
+    if (props?.authorizerFunctionArn) {
+      const authorizerFunction = lambda.Function.fromFunctionArn(this, 'BasicAuthorizerFunction', props.authorizerFunctionArn);
+      tokenAuthorizer = new apigateway.TokenAuthorizer(this, 'BasicTokenAuthorizer', {
+        handler: authorizerFunction,
+        identitySource: 'method.request.header.Authorization',
+        resultsCacheTtl: cdk.Duration.minutes(0),
+      });
+    }
 
     // Lambda function for GET /import - Generates signed URL
     const importProductsFileFunction = new lambda.Function(
@@ -138,6 +146,59 @@ export class ImportServiceStack extends cdk.Stack {
     // Create /import resource and GET method
     const importResource = api.root.addResource('import');
 
+    const methodOptions: apigateway.MethodOptions = {
+      requestParameters: {
+        'method.request.querystring.name': true, // name is required
+      },
+      ...(tokenAuthorizer && {
+        authorizer: tokenAuthorizer,
+        authorizationType: apigateway.AuthorizationType.CUSTOM,
+      }),
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseParameters: {
+            'method.response.header.Content-Type': true,
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '400',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '401',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '403',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '500',
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+      ],
+    };
+
     const getMethod = importResource.addMethod('GET', new apigateway.LambdaIntegration(importProductsFileFunction, {
       integrationResponses: [
         {
@@ -166,38 +227,7 @@ export class ImportServiceStack extends cdk.Stack {
           },
         },
       ],
-    }), {
-      requestParameters: {
-        'method.request.querystring.name': true, // name is required
-      },
-      methodResponses: [
-        {
-          statusCode: '200',
-          responseParameters: {
-            'method.response.header.Content-Type': true,
-            'method.response.header.Access-Control-Allow-Origin': true,
-            'method.response.header.Access-Control-Allow-Methods': true,
-            'method.response.header.Access-Control-Allow-Headers': true,
-          },
-        },
-        {
-          statusCode: '400',
-          responseParameters: {
-            'method.response.header.Access-Control-Allow-Origin': true,
-            'method.response.header.Access-Control-Allow-Methods': true,
-            'method.response.header.Access-Control-Allow-Headers': true,
-          },
-        },
-        {
-          statusCode: '500',
-          responseParameters: {
-            'method.response.header.Access-Control-Allow-Origin': true,
-            'method.response.header.Access-Control-Allow-Methods': true,
-            'method.response.header.Access-Control-Allow-Headers': true,
-          },
-        },
-      ],
-    });
+    }), methodOptions);
 
     // Stack outputs
     this.apiEndpoint = api.url;
