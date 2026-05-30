@@ -1,7 +1,7 @@
 {
-  "name": "product-service",
+  "name": "authorization-service",
   "version": "1.0.0",
-  "description": "Product Service with AWS CDK",
+  "description": "Authorization Service with AWS CDK - provides Basic Auth Lambda authorizer",
   "main": "cdk/app.ts",
   "scripts": {
     "build": "tsc",
@@ -10,17 +10,17 @@
     "cdk:diff": "cdk diff",
     "deploy": "cdk deploy --require-approval never",
     "destroy": "cdk destroy --force",
-    "seed": "python scripts/seed_db.py",
-    "test": "pytest tests/ -v"
+    "test": "pytest tests/"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.128.0",
-    "constructs": "^10.3.0",
-    "dotenv": "^17.4.2"
+    "constructs": "^10.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "aws-cdk": "^2.128.0",
-    "typescript": "^4.9.5"
+    "typescript": "^4.9.5",
+    "aws-cdk": "^2.128.0"
   }
 }
+
+
